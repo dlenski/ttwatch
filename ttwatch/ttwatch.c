@@ -337,9 +337,9 @@ void do_get_activities_callback(uint32_t id, uint32_t length, void *cbdata)
         gmtime_r(&t, &timestamp);
     }
 
-        /* place output files directly in directory */
-        _mkdir(options->activity_store);
-        chdir(options->activity_store);
+    /* place output files directly in directory */
+    _mkdir(c->options->activity_store);
+    chdir(c->options->activity_store);
 
     /* create the file name */
     if (ttbin)
