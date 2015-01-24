@@ -13,7 +13,7 @@ void export_gpx(TTBIN_FILE *ttbin, FILE *file)
     char timestr[32];
     TTBIN_RECORD *record;
     int heart_rate;
-    int cadence = 0;
+    int cadence;
 
     if (!ttbin->gps_records.count)
         return;
@@ -35,7 +35,7 @@ void export_gpx(TTBIN_FILE *ttbin, FILE *file)
           "    <trk>\r\n        <name>", file);
     switch(ttbin->activity)
     {
-    case ACTIVITY_CYCLING:   fputs("CYCLING", file);   break;
+    case ACTIVITY_CYCLING:   cadence = 1;  fputs("CYCLING", file); break;
     case ACTIVITY_RUNNING:   cadence = 30; fputs("RUNNING", file); break;
     case ACTIVITY_SWIMMING:  fputs("POOL SWIM", file); break;
     case ACTIVITY_TREADMILL: fputs("TREADMILL", file); break;

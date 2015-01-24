@@ -117,6 +117,11 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                 fprintf(file, "                            <Value>%d</Value>\r\n", heart_rate);
                 fputs(        "                        </HeartRateBpm>\r\n", file);
             }
+            if (ttbin->activity==ACTIVITY_CYCLING && record->gps.cycles > 0)
+            {
+                fputs(        "                        <SensorState>Present</SensorState>\r\n", file);
+                fprintf(file, "                        <Cadence>%d</Cadence>\r\n", (int)record->gps.cycles);
+            }
             fputs(        "                        <Extensions>\r\n"
                           "                            <TPX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
             fprintf(file, "                                <Speed>%.2f</Speed>\r\n", record->gps.instant_speed);
