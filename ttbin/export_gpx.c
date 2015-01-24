@@ -13,6 +13,7 @@ void export_gpx(TTBIN_FILE *ttbin, FILE *file)
     char timestr[32];
     TTBIN_RECORD *record;
     int heart_rate;
+    int cadence = 0;
 
     if (!ttbin->gps_records.count)
         return;
@@ -34,8 +35,8 @@ void export_gpx(TTBIN_FILE *ttbin, FILE *file)
           "    <trk>\r\n        <name>", file);
     switch(ttbin->activity)
     {
-    case ACTIVITY_RUNNING:   fputs("RUNNING", file);   break;
     case ACTIVITY_CYCLING:   fputs("CYCLING", file);   break;
+    case ACTIVITY_RUNNING:   cadence = 30; fputs("RUNNING", file); break;
     case ACTIVITY_SWIMMING:  fputs("POOL SWIM", file); break;
     case ACTIVITY_TREADMILL: fputs("TREADMILL", file); break;
     case ACTIVITY_FREESTYLE: fputs("FREESTYLE", file); break;
@@ -60,13 +61,16 @@ void export_gpx(TTBIN_FILE *ttbin, FILE *file)
             fputs(        "                <time>", file);
             fputs(timestr, file);
             fputs("</time>\r\n", file);
-            if (heart_rate > 0)
+            if (heart_rate > 0 || cadence)
             {
-                fputs("                <extensions>\r\n"
-                      "                    <gpxtpx:TrackPointExtension>\r\n", file);
-                fprintf(file, "                        <gpxtpx:hr>%d</gpxtpx:hr>\r\n", heart_rate);
-                fputs("                    </gpxtpx:TrackPointExtension>\r\n"
-                      "                </extensions>\r\n", file);
+                fputs(            "                <extensions>\r\n"
+                                  "                    <gpxtpx:TrackPointExtension>\r\n", file);
+                if (cadence)
+                    fprintf(file, "                        <gpxtpx:cad>%d</gpxctx:cad>\r\n", cadence*(int)record->gps.cycles);
+                if (heart_rate > 0)
+                    fprintf(file, "                        <gpxtpx:hr>%d</gpxtpx:hr>\r\n", heart_rate);
+                fputs(            "                    </gpxtpx:TrackPointExtension>\r\n"
+                                  "                </extensions>\r\n", file);
             }
             fputs(        "            </trkpt>\r\n", file);
             break;

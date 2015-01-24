@@ -120,6 +120,8 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
             fputs(        "                        <Extensions>\r\n"
                           "                            <TPX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
             fprintf(file, "                                <Speed>%.2f</Speed>\r\n", record->gps.instant_speed);
+            if (ttbin->activity==ACTIVITY_RUNNING)
+                fprintf(file, "                                <RunCadence>%d</RunCadence>\r\n", 30*(int)record->gps.cycles);
             fputs(        "                            </TPX>\r\n"
                           "                        </Extensions>\r\n"
                           "                    </Trackpoint>\r\n", file);
