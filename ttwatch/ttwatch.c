@@ -72,7 +72,8 @@ void show_device_versions(TTWATCH *watch)
 {
     char name[64];
 
-    write_log(0, "Product ID:       0x%08x\n", watch->product_id);
+    write_log(0, "Product ID:       0x%08x (0x%08x if little-endian)\n",
+              watch->product_id, be32toh(watch->product_id));
     write_log(0, "BLE Version:      %u\n", watch->ble_version);
     write_log(0, "Firmware Version: %d.%d.%d\n", (watch->firmware_version >> 16) & 0xff,
         (watch->firmware_version >> 8) & 0xff, watch->firmware_version & 0xff);
