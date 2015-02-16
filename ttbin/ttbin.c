@@ -823,7 +823,7 @@ const char *create_filename(TTBIN_FILE *ttbin, const char *ext)
     case ACTIVITY_TREADMILL: type = "Treadmill"; break;
     case ACTIVITY_FREESTYLE: type = "Freestyle"; break;
     }
-    sprintf(filename, "%04d-%02d-%02dT%02d:%02d:%02d_%s.%s",
+    sprintf(filename, "%04d-%02d-%02dT%02d%02d%02d_%s.%s",
             time->tm_year+1900, time->tm_mon+1, time->tm_mday,
             time->tm_hour, time->tm_min, time->tm_sec, type, ext);
 
