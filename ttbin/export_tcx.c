@@ -9,7 +9,6 @@
 
 void export_tcx(TTBIN_FILE *ttbin, FILE *file)
 {
-    uint32_t i;
     char timestr[32];
     TTBIN_RECORD *record;
     float max_speed = 0.0f;
@@ -28,10 +27,12 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
     float lap_max_speed;
     unsigned lap_calories, lap_start_calories = 0;
     unsigned lap_heart_rate_count;
+    unsigned lap_start_heart_rate_count;
     unsigned lap_avg_heart_rate;
     unsigned lap_max_heart_rate;
     unsigned lap_step_count;
     const char *trigger_method = "Manual";
+    float cadence_avg = 0.0f;
 
     if (!ttbin->gps_records.count)
         return;
@@ -131,7 +132,10 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
             fprintf(file, "                                <Speed>%.2f</Speed>\r\n", record->gps.instant_speed);
             if (ttbin->activity==ACTIVITY_RUNNING)
             {
-                fprintf(file, "                                <RunCadence>%d</RunCadence>\r\n", 30*(int)record->gps.cycles);
+                /* use an exponential moving average to smooth cadence data */
+                if ((int)record->gps.cycles <= 4) // max 4 * 60 = 240 spm
+                    cadence_avg = (0.05 * 30 * (int)record->gps.cycles) + (1.0 - 0.05) * cadence_avg;
+                fprintf(file, "                                <RunCadence>%d</RunCadence>\r\n", (int)cadence_avg);
                 total_step_count += record->gps.cycles;
             }
             fputs(        "                            </TPX>\r\n"
@@ -181,9 +185,9 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
             lap_distance = record->lap.total_distance - lap_start_distance;
             lap_max_speed = max_speed;
             lap_calories = record->lap.total_calories - lap_start_calories;
-            lap_heart_rate_count = heart_rate_count;
-            if (heart_rate_count > 0)
-                lap_avg_heart_rate = (total_heart_rate + (heart_rate_count >> 1)) / heart_rate_count;
+            lap_heart_rate_count = heart_rate_count - lap_start_heart_rate_count;;
+            if (lap_heart_rate_count > 0)
+                lap_avg_heart_rate = (total_heart_rate + (lap_heart_rate_count >> 1)) / lap_heart_rate_count;
             lap_max_heart_rate = max_heart_rate;
             lap_step_count = total_step_count;
             gps_count = 0;
@@ -197,6 +201,7 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
             lap_start_time = record->lap.total_time;
             lap_start_distance = record->lap.total_distance;
             lap_start_calories = record->lap.total_calories;
+            lap_start_heart_rate_count = heart_rate_count;
             break;
         }
     }

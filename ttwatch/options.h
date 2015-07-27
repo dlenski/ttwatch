@@ -7,12 +7,14 @@
 
 typedef struct
 {
+    int show_packets;
     int update_firmware;
     int update_gps;
 #ifdef UNSAFE
     int list_files;
     int read_file;
     int write_file;
+    int delete_file;
     uint32_t file_id;
 #endif
     int select_device;

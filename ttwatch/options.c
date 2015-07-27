@@ -4,8 +4,10 @@
 \******************************************************************************/
 
 #include "options.h"
+#include "log.h"
 #include "../ttbin/ttbin.h"
 
+#include <ctype.h>
 #include <memory.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -199,6 +201,7 @@ OPTIONS *alloc_options()
 {
     OPTIONS *o = malloc(sizeof(OPTIONS));
     memset(o, 0, sizeof(OPTIONS));
+    return o;
 }
 
 /*****************************************************************************/
@@ -222,6 +225,7 @@ OPTIONS *copy_options(const OPTIONS *o)
     COPY_STRING(post_processor);
 
 #undef COPY_STRING
+    return op;
 }
 
 /*****************************************************************************/
