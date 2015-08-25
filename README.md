@@ -191,3 +191,10 @@ The following options only take effect when running as a daemon:
 Boolean values can have a value of ('y', 'yes', 'true', 'n', 'no' or 'false').
 These values are *not* case-sensitive.
 
+Recovery
+========
+
+It *may* be possible to reset a watch with damaged firmware or file structure
+using the Recovery Mode, which requires TomTom's official MySports Connect
+software (Windows or Mac only): [information from TomTom support]
+(http://us.support.tomtom.com/app/answers/detail/a_id/17394).
