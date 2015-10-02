@@ -7,6 +7,55 @@
 
 #include <math.h>
 
+enum LapState
+{
+    LapState_None,      /* the next GPS/treadmill record is processed normally */
+    LapState_Start,     /* the next GPS/treadmill record starts a lap */
+    LapState_Finish     /* the next GPS/treadmill record finishes a lap */
+};
+
+struct LapData
+{
+    float avg_speed;
+    unsigned step_count;
+    unsigned time;
+    const char *trigger_method;
+    float distance;
+    float max_speed;
+    unsigned calories;
+    unsigned avg_heart_rate;
+    unsigned max_heart_rate;
+};
+
+static void write_lap_finish(FILE *file, const struct LapData *lap)
+{
+    fputs(        "                    <Extensions>\r\n"
+                  "                       <LX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
+    fprintf(file, "                           <AvgSpeed>%.5f</AvgSpeed>\r\n", lap->avg_speed);
+    if (lap->step_count)
+        fprintf(file, "                           <Steps>%d</Steps>\r\n"
+                  "                           <AvgRunCadence>%d</AvgRunCadence>\r\n", lap->step_count, 30*lap->step_count/lap->time);
+    fputs(        "                       </LX>\r\n"
+                  "                    </Extensions>\r\n", file);
+    fputs(        "                </Track>\r\n", file);
+    fprintf(file, "                <TriggerMethod>%s</TriggerMethod>\r\n", lap->trigger_method);
+    fprintf(file, "                <TotalTimeSeconds>%d</TotalTimeSeconds>\r\n", lap->time);
+    fprintf(file, "                <DistanceMeters>%.2f</DistanceMeters>\r\n", lap->distance);
+    if (lap->max_speed > 0.0f)
+        fprintf(file, "                <MaximumSpeed>%.2f</MaximumSpeed>\r\n", lap->max_speed);
+    fprintf(file, "                <Calories>%d</Calories>\r\n", lap->calories);
+    if (lap->avg_heart_rate > 0)
+    {
+        fputs(        "                <AverageHeartRateBpm>\r\n", file);
+        fprintf(file, "                    <Value>%d</Value>\r\n", lap->avg_heart_rate);
+        fputs(        "                </AverageHeartRateBpm>\r\n", file);
+        fputs(        "                <MaximumHeartRateBpm>\r\n", file);
+        fprintf(file, "                    <Value>%d</Value>\r\n", lap->max_heart_rate);
+        fputs(        "                </MaximumHeartRateBpm>\r\n", file);
+    }
+    fputs(        "            </Lap>\r\n", file);
+}
+
 void export_tcx(TTBIN_FILE *ttbin, FILE *file)
 {
     char timestr[32];
@@ -19,19 +68,13 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
     uint32_t move_count = 0;
     uint32_t total_step_count = 0;
     unsigned heart_rate;
-    int lap_state;
+    enum LapState lap_state;
     int insert_pause;
-    float lap_avg_speed;
-    unsigned lap_time, lap_start_time = 0;
-    float lap_distance, lap_start_distance = 0.0f;
-    float lap_max_speed;
-    unsigned lap_calories, lap_start_calories = 0;
+    unsigned lap_start_time = 0;
+    float lap_start_distance = 0.0f;
+    unsigned lap_start_calories = 0;
     unsigned lap_heart_rate_count;
     unsigned lap_start_heart_rate_count;
-    unsigned lap_avg_heart_rate;
-    unsigned lap_max_heart_rate;
-    unsigned lap_step_count;
-    const char *trigger_method = "Manual";
     const char *model;
     float cadence_avg = 0.0f;
     float smooth_cadence = 0.0f;
@@ -39,8 +82,14 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
     time_t smooth_cadence_lt;
     double distance_factor = 1;
     uint32_t steps, steps_prev = 0;
+    time_t timestamp;
+    float distance;
 
-    if (ttbin->activity == ACTIVITY_TREADMILL) {
+    struct LapData lap = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    lap.trigger_method = "Manual";
+
+    if (ttbin->activity == ACTIVITY_TREADMILL)
+    {
         for (record = ttbin->last; record; record = record->prev)
         {
             if ((record->tag == TAG_TREADMILL) && record->treadmill.distance)
@@ -49,7 +98,8 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                 break;
             }
         }
-    } else if (!ttbin->gps_records.count)
+    }
+    else if (!ttbin->gps_records.count)
         return;
 
     switch(ttbin->product_id)
@@ -85,12 +135,8 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
     fputs(timestr, file);
     fputs("</Id>\r\n", file);
 
-    fprintf(file, "            <Lap StartTime=\"%s\">\r\n", timestr);
-    fputs(        "                <Intensity>Active</Intensity>\r\n"
-                  "                <Track>\r\n", file);
-
     heart_rate = 0;
-    lap_state = 0;
+    lap_state = LapState_Start; /* the first GPS/treadmill record should start a lap */
     insert_pause = 0;
     for (record = ttbin->first; record; record = record->next)
     {
@@ -99,13 +145,13 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
         case TAG_TRAINING_SETUP:
             switch (record->training_setup.type)
             {
-            case 7: trigger_method="Time";     break;
-            case 8: trigger_method="Distance"; break;
+            case TRAINING_LAPS_TIME:     lap.trigger_method = "Time";     break;
+            case TRAINING_LAPS_DISTANCE: lap.trigger_method = "Distance"; break;
             }
             break;
 
         case TAG_STATUS:
-            if ((record->status.status == 2) && (lap_state == 0))
+            if ((record->status.status == TTBIN_STATUS_PAUSED) && (lap_state == LapState_None))
             {
                 insert_pause = 1;
                 /* reset cadence to avoid spikes when pausing */
@@ -116,7 +162,8 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
 
         case TAG_TREADMILL:
         case TAG_GPS:
-            if (record->tag==TAG_TREADMILL) {
+            if (record->tag == TAG_TREADMILL)
+            {
                 /* this will happen if the activity is paused and then resumed */
                 if (record->treadmill.timestamp == 0)
                     break;
@@ -137,8 +184,12 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                 }
 
                 total_step_count += steps;
-            } else { /* TAG_GPS only */
-                /* this will happen if the activity is paused and then resumed, or if the GPS signal is lost  */
+                timestamp = record->treadmill.timestamp;
+                distance = record->treadmill.distance * distance_factor;
+            }
+            else /* TAG_GPS only */
+            {
+                /* this will happen if the activity is paused and then resumed, or if the GPS signal is lost */
                 if ((record->gps.timestamp == 0) || ((record->gps.latitude == 0) && (record->gps.longitude == 0)))
                     break;
 
@@ -159,14 +210,16 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                     smooth_cadence_lt = record->gps.timestamp;
                 }
 
-                if (ttbin->activity==ACTIVITY_RUNNING)
+                if (ttbin->activity == ACTIVITY_RUNNING)
                     total_step_count += record->gps.cycles;
+                timestamp = record->gps.timestamp;
+                distance = record->gps.cum_distance;
             }
 
             /* code common to both TAG_GPS and TAG_TREADMILL */
             ++move_count;
 
-            if (lap_state == 0 && insert_pause)
+            if ((lap_state == LapState_None) && insert_pause)
             {
                 /* Garmin's tools use multiple tracks within a lap to signal a pause */
                 insert_pause = 0;
@@ -174,22 +227,20 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                       "                <Track>\r\n", file);
             }
 
-            if (lap_state == 1)
+            if (lap_state == LapState_Start)
             {
                 fprintf(file, "            <Lap StartTime=\"%s\">\r\n", timestr);
                 fputs(        "                <Intensity>Active</Intensity>\r\n"
                               "                <Track>\r\n", file);
-                lap_state = 0;
+                lap_state = LapState_None;
             }
 
-            if (record->tag==TAG_GPS)
-                strftime(timestr, sizeof(timestr), "%FT%X.000Z", gmtime(&record->gps.timestamp));
-            else if (record->tag==TAG_TREADMILL)
-                strftime(timestr, sizeof(timestr), "%FT%X.000Z", gmtime(&record->treadmill.timestamp));
+            strftime(timestr, sizeof(timestr), "%FT%X.000Z", gmtime(&timestamp));
 
             fputs(        "                    <Trackpoint>\r\n", file);
             fprintf(file, "                        <Time>%s</Time>\r\n", timestr);
-            if (record->tag==TAG_GPS) {
+            if (record->tag == TAG_GPS)
+            {
                 fputs(        "                        <Position>\r\n", file);
                 fprintf(file, "                            <LatitudeDegrees>%.7f</LatitudeDegrees>\r\n", record->gps.latitude);
                 fprintf(file, "                            <LongitudeDegrees>%.7f</LongitudeDegrees>\r\n", record->gps.longitude);
@@ -197,11 +248,7 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
                 if (!isnan(record->gps.elevation))
                     fprintf(file, "                        <AltitudeMeters>%.0f</AltitudeMeters>\r\n", record->gps.elevation);
             }
-
-            if (record->tag==TAG_GPS)
-                fprintf(file, "                        <DistanceMeters>%.5f</DistanceMeters>\r\n", record->gps.cum_distance);
-            else if (record->tag==TAG_TREADMILL)
-                fprintf(file, "                        <DistanceMeters>%.5f</DistanceMeters>\r\n", record->treadmill.distance * distance_factor);
+            fprintf(file, "                        <DistanceMeters>%.5f</DistanceMeters>\r\n", distance);
 
             if (heart_rate > 0)
             {
@@ -212,44 +259,22 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
 
             fputs(        "                        <Extensions>\r\n"
                           "                            <TPX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
-            if (record->tag==TAG_GPS)
+            if (record->tag == TAG_GPS)
                 fprintf(file, "                                <Speed>%.2f</Speed>\r\n", record->gps.instant_speed);
             if (ttbin->activity==ACTIVITY_RUNNING || ttbin->activity==ACTIVITY_TREADMILL)
                 fprintf(file, "                                <RunCadence>%d</RunCadence>\r\n", (int)smooth_cadence);
             fputs(        "                            </TPX>\r\n"
                           "                        </Extensions>\r\n"
                           "                    </Trackpoint>\r\n", file);
-            if (lap_state == 2)
+
+            if (lap_state == LapState_Finish)
             {
-                fputs(        "                    <Extensions>\r\n"
-                              "                       <LX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
-                fprintf(file, "                           <AvgSpeed>%.5f</AvgSpeed>\r\n", lap_avg_speed);
-                if (lap_step_count)
-                    fprintf(file, "                           <Steps>%d</Steps>\r\n"
-                              "                           <AvgRunCadence>%d</AvgRunCadence>\r\n", lap_step_count, 30*lap_step_count/lap_time);
-                fputs(        "                       </LX>\r\n"
-                              "                    </Extensions>\r\n", file);
-                fputs(        "                </Track>\r\n", file);
-                fprintf(file, "                <TriggerMethod>%s</TriggerMethod>\r\n", trigger_method);
-                fprintf(file, "                <TotalTimeSeconds>%d</TotalTimeSeconds>\r\n", lap_time);
-                fprintf(file, "                <DistanceMeters>%.2f</DistanceMeters>\r\n", lap_distance);
-                if (record->tag==TAG_GPS)
-                    fprintf(file, "                <MaximumSpeed>%.2f</MaximumSpeed>\r\n", lap_max_speed);
-                fprintf(file, "                <Calories>%d</Calories>\r\n", lap_calories);
-                if (heart_rate_count)
-                {
-                    fputs(        "                <AverageHeartRateBpm>\r\n", file);
-                    fprintf(file, "                    <Value>%d</Value>\r\n", lap_avg_heart_rate);
-                    fputs(        "                </AverageHeartRateBpm>\r\n", file);
-                    fputs(        "                <MaximumHeartRateBpm>\r\n", file);
-                    fprintf(file, "                    <Value>%d</Value>\r\n", lap_max_heart_rate);
-                    fputs(        "                </MaximumHeartRateBpm>\r\n", file);
-                }
-                fputs(        "            </Lap>\r\n", file);
-                lap_state = 1;
+                write_lap_finish(file, &lap);
+                lap_state = LapState_Start;
             }
             heart_rate = 0;
             break;
+
         case TAG_HEART_RATE:
             if (record->heart_rate.heart_rate > max_heart_rate)
                 max_heart_rate = record->heart_rate.heart_rate;
@@ -258,22 +283,28 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
 
             heart_rate = record->heart_rate.heart_rate;
             break;
+
         case TAG_LAP:
-            lap_time = record->lap.total_time - lap_start_time;
-            if (ttbin->activity == ACTIVITY_TREADMILL) {
-                lap_distance = distance_factor * (double)(record->lap.total_distance - lap_start_distance);
-                lap_avg_speed = lap_distance / move_count;
-            } else {
-                lap_distance = record->lap.total_distance - lap_start_distance;
-                lap_avg_speed = total_speed / move_count;
+            lap.time = record->lap.total_time - lap_start_time;
+            if (ttbin->activity == ACTIVITY_TREADMILL)
+            {
+                lap.distance = distance_factor * (double)(record->lap.total_distance - lap_start_distance);
+                lap.avg_speed = lap.distance / move_count;
             }
-            lap_max_speed = max_speed;
-            lap_calories = record->lap.total_calories - lap_start_calories;
+            else
+            {
+                lap.distance = record->lap.total_distance - lap_start_distance;
+                lap.avg_speed = total_speed / move_count;
+            }
+            lap.max_speed = max_speed;
+            lap.calories = record->lap.total_calories - lap_start_calories;
             lap_heart_rate_count = heart_rate_count - lap_start_heart_rate_count;;
             if (lap_heart_rate_count > 0)
-                lap_avg_heart_rate = (total_heart_rate + (lap_heart_rate_count >> 1)) / lap_heart_rate_count;
-            lap_max_heart_rate = max_heart_rate;
-            lap_step_count = total_step_count;
+                lap.avg_heart_rate = (total_heart_rate + (lap_heart_rate_count >> 1)) / lap_heart_rate_count;
+            else
+                lap.avg_heart_rate = 0;
+            lap.max_heart_rate = max_heart_rate;
+            lap.step_count = total_step_count;
             move_count = 0;
             heart_rate_count = 0;
             total_speed = 0;
@@ -281,7 +312,7 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
             max_heart_rate = 0;
             total_heart_rate = 0;
             total_step_count = 0;
-            lap_state = 2;
+            lap_state = LapState_Finish;
             lap_start_time = record->lap.total_time;
             lap_start_distance = record->lap.total_distance;
             lap_start_calories = record->lap.total_calories;
@@ -290,50 +321,28 @@ void export_tcx(TTBIN_FILE *ttbin, FILE *file)
         }
     }
 
-    if (lap_state != 1)
+    if (lap_state != LapState_Start)
     {
-        if (!lap_state)
+        if (lap_state == LapState_None)
         {
-            lap_time = ttbin->duration - lap_start_time;
-            lap_distance = ttbin->total_distance - lap_start_distance;
+            lap.time = ttbin->duration - lap_start_time;
+            lap.distance = ttbin->total_distance - lap_start_distance;
             if (ttbin->activity == ACTIVITY_TREADMILL)
-                lap_avg_speed = lap_distance / move_count;
+                lap.avg_speed = lap.distance / move_count;
             else
-                lap_avg_speed = total_speed / move_count;
-            lap_max_speed = max_speed;
-            lap_calories = ttbin->total_calories - lap_start_calories;
+                lap.avg_speed = total_speed / move_count;
+            lap.max_speed = max_speed;
+            lap.calories = ttbin->total_calories - lap_start_calories;
             lap_heart_rate_count = heart_rate_count - lap_start_heart_rate_count;;
             if (lap_heart_rate_count > 0)
-                lap_avg_heart_rate = (total_heart_rate + (lap_heart_rate_count >> 1)) / lap_heart_rate_count;
-            lap_max_heart_rate = max_heart_rate;
-            lap_step_count = total_step_count;
+                lap.avg_heart_rate = (total_heart_rate + (lap_heart_rate_count >> 1)) / lap_heart_rate_count;
+            else
+                lap.avg_heart_rate = 0;
+            lap.max_heart_rate = max_heart_rate;
+            lap.step_count = total_step_count;
         }
 
-        fputs(        "                    <Extensions>\r\n"
-                      "                       <LX xmlns=\"http://www.garmin.com/xmlschemas/ActivityExtension/v2\">\r\n", file);
-        fprintf(file, "                           <AvgSpeed>%.5f</AvgSpeed>\r\n", lap_avg_speed);
-        if (lap_step_count)
-            fprintf(file, "                           <Steps>%d</Steps>\r\n"
-                      "                           <AvgRunCadence>%d</AvgRunCadence>\r\n", lap_step_count, 30*lap_step_count/lap_time);
-        fputs(        "                       </LX>\r\n"
-                      "                    </Extensions>\r\n", file);
-        fputs(        "                </Track>\r\n", file);
-        fprintf(file, "                <TriggerMethod>%s</TriggerMethod>\r\n", trigger_method);
-        fprintf(file, "                <TotalTimeSeconds>%d</TotalTimeSeconds>\r\n", lap_time);
-        fprintf(file, "                <DistanceMeters>%.2f</DistanceMeters>\r\n", lap_distance);
-        if (ttbin->gps_records.count)
-            fprintf(file, "                <MaximumSpeed>%.2f</MaximumSpeed>\r\n", lap_max_speed);
-        fprintf(file, "                <Calories>%d</Calories>\r\n", lap_calories);
-        if (heart_rate_count)
-        {
-            fputs(        "                <AverageHeartRateBpm>\r\n", file);
-            fprintf(file, "                    <Value>%d</Value>\r\n", lap_avg_heart_rate);
-            fputs(        "                </AverageHeartRateBpm>\r\n", file);
-            fputs(        "                <MaximumHeartRateBpm>\r\n", file);
-            fprintf(file, "                    <Value>%d</Value>\r\n", lap_max_heart_rate);
-            fputs(        "                </MaximumHeartRateBpm>\r\n", file);
-        }
-        fputs(        "            </Lap>\r\n", file);
+        write_lap_finish(file, &lap);
     }
 
     fputs(        "            <Creator xsi:type=\"Device_t\">\r\n", file);

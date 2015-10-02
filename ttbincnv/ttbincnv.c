@@ -64,16 +64,16 @@ char *toupper_s(const char *str)
 void help(char *argv[])
 {
     unsigned i;
-    printf("Usage: %s 'OPTION]... [FILE]\n", argv[0]);
+    printf("Usage: %s [OPTION]... [FILE]\n", argv[0]);
     printf("Converts TomTom TTBIN files to other file formats.\n");
     printf("\n");
     printf("Mandatory arguments to long options are mandatory for short options too.\n");
-    printf("  -h, --help         Print this help.\n");
-    printf("  -l, --laps=[list]  Replace the laps recorded on the watch with a list of\n");
-    printf("                       alternative laps.\n");
-    printf("  -E, --elevation    Download elevation data.\n");
-    printf("  -f, --force        Overwrite existing output filenames.\n\n");
-    printf("  -a, --all          Output all supported file formats.\n");
+    printf("  -h, --help          Print this help.\n");
+    printf("  -l, --laps=[list]   Replace the laps recorded on the watch with a list of\n");
+    printf("                        alternative laps.\n");
+    printf("  -E, --elevation     Download elevation data.\n");
+    printf("  -f, --force         Overwrite existing output filenames.\n\n");
+    printf("  -a, --all           Output all supported file formats.\n");
     for (i = 0; i < OFFLINE_FORMAT_COUNT; ++i)
     {
         if (OFFLINE_FORMATS[i].producer)
