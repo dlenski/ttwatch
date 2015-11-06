@@ -485,7 +485,8 @@ int update_firmware_file(TTWATCH *watch, FIRMWARE_FILE *files, int file_count, u
         if (id && (files[i].id != id))
             continue;
         else if (!id && ((files[i].id == TTWATCH_FILE_SYSTEM_FIRMWARE) || (files[i].id == TTWATCH_FILE_GPS_FIRMWARE) ||
-                         (files[i].id == TTWATCH_FILE_MANIFEST1)       || (files[i].id == TTWATCH_FILE_MANIFEST2)))
+                         (files[i].id == TTWATCH_FILE_MANIFEST1)       || (files[i].id == TTWATCH_FILE_MANIFEST2) ||
+                         (files[i].id == TTWATCH_FILE_BLE_FIRMWARE)))
         {
             continue;
         }
@@ -503,7 +504,7 @@ int update_firmware_file(TTWATCH *watch, FIRMWARE_FILE *files, int file_count, u
 }
 
 /*****************************************************************************/
-void do_update_firmware(TTWATCH *watch)
+void do_update_firmware(TTWATCH *watch, int force)
 {
     uint32_t product_id;
     char url[128];
@@ -516,10 +517,12 @@ void do_update_firmware(TTWATCH *watch)
     int file_count = 0;
     int i;
     char *ptr, *fw_url;
+    char *serial;
 
     product_id = watch->product_id;
     current_version = watch->firmware_version;
     current_ble_version = watch->ble_version;
+    serial = strdup(watch->serial_number);
 
     /* download the firmware information file */
     sprintf(url, "http://download.tomtom.com/sweet/fitness/Firmware/%08X/FirmwareVersionConfigV2.xml?timestamp=%d",
@@ -548,8 +551,59 @@ void do_update_firmware(TTWATCH *watch)
     }
     latest_ble_version = strtoul(ptr + 14, NULL, 0);
 
+    /* check to see if we need to do anything */
+    if (!force && (latest_ble_version <= current_ble_version))
+        write_log(1, "Current BLE firmware is already at latest version\n");
+    else
+    {
+        write_log(0, "Current BLE Firmware Version: %u\n", current_ble_version);
+        write_log(0, "Latest BLE Firmware Version : %u\n", latest_ble_version);
+
+        /* find the download URL of the BLE firmware */
+        ptr = strstr(ptr, "URL=\"");
+        if (!ptr)
+        {
+            write_log(1, "Unable to determine BLE firmware download URL\n");
+            goto cleanup;
+        }
+        fw_url = ptr + 5;
+        ptr = strstr(fw_url, "\"");
+        if (!ptr)
+        {
+            write_log(1, "Unable to determine BLE firmware download URL\n");
+            goto cleanup;
+        }
+        *ptr = 0;
+
+        /* find the BLE firmware file ID */
+        ptr = strrchr(fw_url, '/');
+        if (!ptr)
+        {
+            write_log(1, "Unable to determine BLE file ID\n");
+            goto cleanup;
+        }
+
+        firmware_files = (FIRMWARE_FILE*)realloc(firmware_files, ++file_count * sizeof(FIRMWARE_FILE));
+
+        firmware_files[file_count - 1].id = strtoul(ptr + 1, NULL, 0);
+        firmware_files[file_count - 1].download.data   = 0;
+        firmware_files[file_count - 1].download.length = 0;
+
+        /* create the full URL and download the file */
+        sprintf(url, "http://download.tomtom.com/sweet/fitness/Firmware/%08X/%s", product_id, fw_url);
+        /*free(fw_url);*/
+        write_log(0, "Download %s ... ", url);
+        if (download_file(url, &firmware_files[file_count - 1].download))
+        {
+            write_log(0, "Failed\n");
+            goto cleanup;
+        }
+        else
+            write_log(0, "Done\n");
+    }
+
     /* check to see if we need to update the firmware */
-    if (latest_version <= current_version)
+    if (!force && (latest_version <= current_version))
         write_log(1, "Current firmware is already at latest version\n");
     else
     {
@@ -587,8 +641,12 @@ void do_update_firmware(TTWATCH *watch)
             else
                 write_log(0, "Done\n");
         }
+    }
 
+    if (file_count > 0)
+    {
         /* update files in this order: 0x000000f0, 0x00010200, 0x00850000, 0x00850001, others */
+        update_firmware_file(watch, firmware_files, file_count, TTWATCH_FILE_BLE_FIRMWARE);
         update_firmware_file(watch, firmware_files, file_count, TTWATCH_FILE_SYSTEM_FIRMWARE);
         ttwatch_send_message_group_1(watch);   /* not sure why this is needed */
         update_firmware_file(watch, firmware_files, file_count, TTWATCH_FILE_GPS_FIRMWARE);
@@ -611,74 +669,9 @@ void do_update_firmware(TTWATCH *watch)
         write_log(0, "Firmware updated\n");
     }
 
-    if (current_ble_version < latest_ble_version)
-    {
-        write_log(1, "Sorry, BLE firmware updating not supported yet\n");
-        goto cleanup;
-    }
-
-#if 0
-    /* check to see if we need to do anything */
-    if (latest_ble_version <= current_ble_version)
-        write_log(1, "Current BLE firmware is already at latest version\n");
-    else
-    {
-        write_log(0, "Current BLE Firmware Version: %u\n", current_ble_version);
-        write_log(0, "Latest BLE Firmware Version : %u\n", latest_ble_version);
-
-        /* find the download URL of the BLE firmware */
-        ptr = strstr(ptr, "URL=\"");
-        if (!ptr)
-        {
-            write_log(1, "Unable to determine BLE firmware download URL\n");
-            goto cleanup;
-        }
-        fw_url = ptr + 5;
-        ptr = strstr(fw_url, "\"");
-        if (!ptr)
-        {
-            write_log(1, "Unable to determine BLE firmware download URL\n");
-            goto cleanup;
-        }
-        *ptr = 0;
-
-        /* find the BLE firmware file ID */
-        ptr = strrchr(fw_url, '/');
-        if (!ptr)
-        {
-            write_log(1, "Unable to determine BLE file ID\n");
-            goto cleanup;
-        }
-        id = strtoul(ptr + 1, NULL, 0);
-        if (!id)
-        {
-            write_log(1, "Unable to determine BLE file ID\n");
-            goto cleanup;
-        }
-
-        /* create the full URL and download the file */
-        sprintf(url, "http://download.tomtom.com/sweet/fitness/Firmware/%08X/%s", product_id, fw_url);
-
-        free(download.data);
-
-        write_log(0, "Download %s ... ", url);
-        fflush(stdout);
-        if (download_file(url, &download))
-        {
-            write_log(0, "Failed\n");
-            goto cleanup;
-        }
-        else
-            write_log(0, "Done\n");
-
-        /* TODO: wait until the BLE version is updated, then work out how to... */
-
-        write_log(0, "BLE firmware updated\n");
-    }
-#endif
-
 cleanup:
     /* free all the allocated data */
+    free(serial);
     if (download.data)
         free(download.data);
     if (firmware_files)
@@ -1317,6 +1310,111 @@ void do_list_settings(TTWATCH *watch)
 }
 
 /*****************************************************************************/
+void do_factory_reset(TTWATCH *watch)
+{
+    write_log(0, "Formatting watch ... ");
+    fflush(stdout);
+    if (ttwatch_format(watch) != TTWATCH_NoError)
+    {
+        write_log(0, "Failed\n");
+        return;
+    }
+    else
+        write_log(0, "Done\n");
+
+    /* force the firmware update */
+    do_update_firmware(watch, 1);
+}
+
+/*****************************************************************************/
+void do_initial_setup(TTWATCH *watch)
+{
+    static const uint8_t FILE_0x00710000[22] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710001[22] = {
+        0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xC3 };
+    static const uint8_t FILE_0x00710002[22] = {
+        0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710003[22] = {
+        0xFC, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710004[22] = {
+        0xFB, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xF0 };
+    static const uint8_t FILE_0x00710100[22] = {
+        0xF5, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xD2 };
+    static const uint8_t FILE_0x00710101[22] = {
+        0xF4, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xE1 };
+    static const uint8_t FILE_0x00710102[22] = {
+        0xF3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xE1 };
+    static const uint8_t FILE_0x00710103[22] = {
+        0xF2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xE1 };
+    static const uint8_t FILE_0x00710104[22] = {
+        0xF1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFC };
+    static const uint8_t FILE_0x00710700[22] = {
+        0xFA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710701[22] = {
+        0xF9, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xC3 };
+    static const uint8_t FILE_0x00710702[22] = {
+        0xF8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710703[22] = {
+        0xF7, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710704[22] = {
+        0xF6, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xF0 };
+    static const uint8_t FILE_0x00710800[22] = {
+        0xF0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xC8 };
+    static const uint8_t FILE_0x00710801[22] = {
+        0xEF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xF8 };
+    static const uint8_t FILE_0x00710802[22] = {
+        0xEE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xFA };
+    static const uint8_t FILE_0x00710803[22] = {
+        0xED, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xE1 };
+    static const uint8_t FILE_0x00710804[22] = {
+        0xEC, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x00, 0x00, 0x00, 0x02, 0xF0 };
+
+    ttwatch_create_race(watch, TTWATCH_Running,   0, "3MI 25M",       4828.0f,  1500,  6, FILE_0x00710000);
+    ttwatch_create_race(watch, TTWATCH_Running,   1, "5KM 26M",       5000.0f,  1560,  8, FILE_0x00710001);
+    ttwatch_create_race(watch, TTWATCH_Running,   2, "6MI 50M",       9656.1f,  3000, 12, FILE_0x00710002);
+    ttwatch_create_race(watch, TTWATCH_Running,   3, "10KM 50M",     10000.0f,  3000, 12, FILE_0x00710003);
+    ttwatch_create_race(watch, TTWATCH_Running,   4, "13.1MI 2HR",   21097.5f,  7200, 30, FILE_0x00710004);
+    ttwatch_create_race(watch, TTWATCH_Cycling,   0, "10MI 35M",     16093.4f,  2100, 10, FILE_0x00710100);
+    ttwatch_create_race(watch, TTWATCH_Cycling,   1, "30KM 60M",     30000.0f,  3600, 16, FILE_0x00710101);
+    ttwatch_create_race(watch, TTWATCH_Cycling,   2, "25MI 1HR",     40233.6f,  3600, 16, FILE_0x00710102);
+    ttwatch_create_race(watch, TTWATCH_Cycling,   3, "60KM 135M",    60000.0f,  8100, 36, FILE_0x00710103);
+    ttwatch_create_race(watch, TTWATCH_Cycling,   4, "100KM 3.5HR", 100000.0f, 12600, 50, FILE_0x00710104);
+    ttwatch_create_race(watch, TTWATCH_Treadmill, 0, "3MI 25M",       4828.0f,  1500,  6, FILE_0x00710700);
+    ttwatch_create_race(watch, TTWATCH_Treadmill, 1, "5KM 26M",       5000.0f,  1560,  8, FILE_0x00710701);
+    ttwatch_create_race(watch, TTWATCH_Treadmill, 2, "6MI 50M",       9656.1f,  3000, 12, FILE_0x00710702);
+    ttwatch_create_race(watch, TTWATCH_Treadmill, 3, "10KM 50M",     10000.0f,  3000, 12, FILE_0x00710703);
+    ttwatch_create_race(watch, TTWATCH_Treadmill, 4, "13.1MI 2HR",   21097.5f,  7200, 30, FILE_0x00710704);
+    ttwatch_create_race(watch, TTWATCH_Freestyle, 0, "3KM 10M",       3000.0f,   600,  3, FILE_0x00710800);
+    ttwatch_create_race(watch, TTWATCH_Freestyle, 1, "5MI 1HR",       8046.7f,  3600, 16, FILE_0x00710801);
+    ttwatch_create_race(watch, TTWATCH_Freestyle, 2, "10KM 2.5HR",   10000.0f,  9000, 36, FILE_0x00710802);
+    ttwatch_create_race(watch, TTWATCH_Freestyle, 3, "25KM 1HR",     25000.0f,  3600, 16, FILE_0x00710803);
+    ttwatch_create_race(watch, TTWATCH_Freestyle, 4, "30MI 2HR",     48280.3f,  7200, 30, FILE_0x00710804);
+
+    ttwatch_create_default_preferences_file(watch);
+}
+
+/*****************************************************************************/
 int list_devices_callback(TTWATCH *watch, void *data)
 {
     char name[64] = {0};
@@ -1354,7 +1452,7 @@ void daemon_watch_operations(TTWATCH *watch, OPTIONS *options)
         do_update_gps(watch);
 
     if (new_options->update_firmware)
-        do_update_firmware(watch);
+        do_update_firmware(watch, 0);
 
     if (new_options->set_time)
         do_set_time(watch);
@@ -1503,12 +1601,16 @@ void help(char *argv[])
     write_log(0, "      --delete-history=[ENTRY] Deletes a single history entry from the watch\n");
     write_log(0, "  -d, --device=STRING        Specify which device to use (see below)\n");
     write_log(0, "      --devices              List detected USB devices that can be selected.\n");
+    write_log(0, "      --factory-reset        Performs a factory reset on the watch. This option\n");
+    write_log(0, "                               must be specified twice for safety.\n");
     write_log(0, "      --get-activities       Downloads and deletes any activity records\n");
     write_log(0, "                               currently stored on the watch\n");
     write_log(0, "      --get-formats          Displays the list of file formats that are\n");
     write_log(0, "                               saved when the watch is automatically processed\n");
     write_log(0, "      --get-name             Displays the current watch name\n");
     write_log(0, "      --get-time             Returns the current GPS time on the watch\n");
+    write_log(0, "      --initial-setup        Performs an initial setup for the watch, adding a\n");
+    write_log(0, "                               default preferences file and default race files\n");
 #ifdef UNSAFE
     write_log(0, "  -l, --list                 List files currently available on the device\n");
 #endif
@@ -1658,6 +1760,7 @@ int main(int argc, char *argv[])
         { "clear-data",     no_argument,       &options->clear_data,      1 },
         { "all-settings",   no_argument,       &options->display_settings,1 },
         { "settings",       no_argument,       &options->list_settings,   1 },
+        { "initial-setup",  no_argument,       &options->initial_setup,   1 },
         { "auto",           no_argument,       0, 'a' },
         { "help",           no_argument,       0, 'h' },
         { "version",        no_argument,       0, 'v' },
@@ -1675,6 +1778,7 @@ int main(int argc, char *argv[])
         { "write",          required_argument, 0, 'w' },
         { "delete",         required_argument, 0, 7   },
 #endif
+        { "factory-reset",  no_argument,       0, 8   },
         {0}
     };
 
@@ -1720,6 +1824,9 @@ int main(int argc, char *argv[])
             if (options->setting_spec)
                 free(options->setting_spec);
             options->setting_spec = strdup(optarg);
+            break;
+        case 8:     /* factory reset */
+            ++options->factory_reset;
             break;
 
         case 'a':   /* auto mode */
@@ -1893,7 +2000,7 @@ int main(int argc, char *argv[])
         !options->list_formats && !options->set_formats && !options->list_races &&
         !options->list_history && !options->delete_history && !options->update_race &&
         !options->clear_data && !options->display_settings && !options->setting &&
-        !options->list_settings)
+        !options->list_settings && !options->factory_reset && !options->initial_setup)
     {
         help(argv);
         free_options(options);
@@ -1978,6 +2085,18 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    if (options->factory_reset)
+    {
+        /* this option must be specified at least twice */
+        if (options->factory_reset < 2)
+            write_log(1, "--factory-reset must be specified twice, otherwise it is ignored\n");
+        else
+            do_factory_reset(watch);
+    }
+
+    if (options->initial_setup)
+        do_initial_setup(watch);
+
     if (options->get_time)
         do_get_time(watch);
 
@@ -2001,7 +2120,7 @@ int main(int argc, char *argv[])
         do_update_gps(watch);
 
     if (options->update_firmware)
-        do_update_firmware(watch);
+        do_update_firmware(watch, 0);
 
     if (options->get_name)
         do_get_watch_name(watch);
