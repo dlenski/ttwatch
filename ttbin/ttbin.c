@@ -107,6 +107,13 @@ typedef struct __attribute__((packed))
 
 typedef struct __attribute__((packed))
 {
+    uint32_t timestamp;
+    uint16_t total_calories;
+    uint32_t total_cycles;
+} FILE_GYM_RECORD;
+
+typedef struct __attribute__((packed))
+{
     uint32_t total_time;        /* seconds since activity start */
     float    total_distance;    /* metres */
     uint16_t total_calories;
@@ -191,6 +198,14 @@ typedef struct __attribute__((packed))
 {
     uint32_t wheel_size;    /* millimetres */
 } FILE_WHEEL_SIZE_RECORD;
+
+typedef struct __attribute__((packed))
+{
+    uint32_t wheel_revolutions;
+    uint16_t wheel_revolutions_time;
+    uint16_t crank_revolutions;
+    uint16_t crank_revolutions_time;
+} FILE_CYCLING_CADENCE_RECORD;
 
 /*****************************************************************************/
 
@@ -283,6 +298,7 @@ TTBIN_FILE *parse_ttbin_data(uint8_t *data, uint32_t size)
                 FILE_STATUS_RECORD              status;
                 FILE_TREADMILL_RECORD           treadmill;
                 FILE_SWIM_RECORD                swim;
+                FILE_GYM_RECORD                 gym;
                 FILE_LAP_RECORD                 lap;
                 FILE_RACE_SETUP_RECORD          race_setup;
                 FILE_RACE_RESULT_RECORD         race_result;
@@ -295,6 +311,7 @@ TTBIN_FILE *parse_ttbin_data(uint8_t *data, uint32_t size)
                 FILE_POOL_SIZE_RECORD           pool_size;
                 FILE_WHEEL_SIZE_RECORD          wheel_size;
                 FILE_HEART_RATE_RECOVERY_RECORD heart_rate_recovery;
+                FILE_CYCLING_CADENCE_RECORD     cycling_cadence;
             };
         } *record;
     } p;
@@ -384,6 +401,14 @@ TTBIN_FILE *parse_ttbin_data(uint8_t *data, uint32_t size)
             record->lap.total_distance = p.record->lap.total_distance;
             record->lap.total_calories = p.record->lap.total_calories;
             append_array(&file->lap_records, record);
+            break;
+        case TAG_CYCLING_CADENCE:
+            record = append_record(file, p.record->tag, length);
+            record->cycling_cadence.wheel_revolutions      = p.record->cycling_cadence.wheel_revolutions;
+            record->cycling_cadence.wheel_revolutions_time = p.record->cycling_cadence.wheel_revolutions_time;
+            record->cycling_cadence.crank_revolutions      = p.record->cycling_cadence.crank_revolutions;
+            record->cycling_cadence.crank_revolutions_time = p.record->cycling_cadence.crank_revolutions_time;
+            append_array(&file->cycling_cadence_records, record);
             break;
         case TAG_TREADMILL:
             p.record->treadmill.timestamp -= file->utc_offset;
@@ -487,6 +512,13 @@ TTBIN_FILE *parse_ttbin_data(uint8_t *data, uint32_t size)
             record->heart_rate_recovery.heart_rate = p.record->heart_rate_recovery.heart_rate;
             file->heart_rate_recovery = record;
             break;
+        case TAG_GYM:
+            record = append_record(file, p.record->tag, length);
+            record->gym.timestamp = p.record->gym.timestamp;
+            record->gym.total_calories  = p.record->gym.total_calories;
+            record->gym.total_cycles    = p.record->gym.total_cycles;
+            append_array(&file->gym_records, record);
+            break;
         default:
             record = append_record(file, p.record->tag, length);
             memcpy(record->data, p.data + 1, length - 1);
@@ -586,6 +618,16 @@ int write_ttbin_file(const TTBIN_FILE *ttbin, FILE *file)
                 record->lap.total_calories
             };
             fwrite(&r, 1, sizeof(FILE_LAP_RECORD), file);
+            break;
+        }
+        case TAG_CYCLING_CADENCE: {
+            FILE_CYCLING_CADENCE_RECORD r = {
+                record->cycling_cadence.wheel_revolutions,
+                record->cycling_cadence.wheel_revolutions_time,
+                record->cycling_cadence.crank_revolutions,
+                record->cycling_cadence.crank_revolutions_time
+            };
+            fwrite(&r, 1, sizeof(FILE_CYCLING_CADENCE_RECORD), file);
             break;
         }
         case TAG_TREADMILL: {
@@ -713,6 +755,14 @@ int write_ttbin_file(const TTBIN_FILE *ttbin, FILE *file)
             fwrite(&r, 1, sizeof(FILE_HEART_RATE_RECOVERY_RECORD), file);
             break;
         }
+        case TAG_GYM: {
+            FILE_GYM_RECORD r = {
+                record->gym.timestamp,
+                record->gym.total_calories,
+                record->gym.total_cycles
+            };
+            fwrite(&r, 1, sizeof(FILE_GYM_RECORD), file);
+        }
         default: {
             fwrite(record->data, 1, record->length - 1, file);
             break;
@@ -791,6 +841,8 @@ void delete_record(TTBIN_FILE *ttbin, TTBIN_RECORD *record)
     case TAG_INTERVAL_START: remove_array(&ttbin->interval_start_records, record); break;
     case TAG_INTERVAL_FINISH: remove_array(&ttbin->interval_finish_records, record); break;
     case TAG_ALTITUDE_UPDATE: remove_array(&ttbin->altitude_records, record); break;
+    case TAG_GYM: remove_array(&ttbin->gym_records, record); break;
+    case TAG_CYCLING_CADENCE: remove_array(&ttbin->cycling_cadence_records, record); break;
     }
 
     if (record != ttbin->first)
@@ -819,6 +871,7 @@ const char *create_filename(TTBIN_FILE *ttbin, const char *ext)
     case ACTIVITY_SWIMMING:  type = "Pool_swim"; break;
     case ACTIVITY_TREADMILL: type = "Treadmill"; break;
     case ACTIVITY_FREESTYLE: type = "Freestyle"; break;
+    case ACTIVITY_GYM:       type = "Gym"; break;
     }
     sprintf(filename, "%04d-%02d-%02dT%02d%02d%02d_%s.%s",
             time->tm_year+1900, time->tm_mon+1, time->tm_mday,
@@ -963,8 +1016,8 @@ uint32_t export_formats(TTBIN_FILE *ttbin, uint32_t formats)
         if ((formats & OFFLINE_FORMATS[i].mask) && OFFLINE_FORMATS[i].producer)
         {
             if ((OFFLINE_FORMATS[i].gps_ok && ttbin->gps_records.count)
-                || (OFFLINE_FORMATS[i].treadmill_ok && ttbin->activity==ACTIVITY_TREADMILL)
-                || (OFFLINE_FORMATS[i].pool_swim_ok && ttbin->activity==ACTIVITY_SWIMMING))
+                || (OFFLINE_FORMATS[i].treadmill_ok && (ttbin->activity == ACTIVITY_TREADMILL))
+                || (OFFLINE_FORMATS[i].pool_swim_ok && (ttbin->activity == ACTIVITY_SWIMMING)))
             {
                 f = fopen(create_filename(ttbin, OFFLINE_FORMATS[i].name), "w");
                 if (f)
@@ -1010,6 +1063,8 @@ void free_ttbin(TTBIN_FILE *ttbin)
     if (ttbin->interval_start_records.records)  free(ttbin->interval_start_records.records);
     if (ttbin->interval_finish_records.records) free(ttbin->interval_finish_records.records);
     if (ttbin->altitude_records.records)        free(ttbin->altitude_records.records);
+    if (ttbin->gym_records.records)             free(ttbin->gym_records.records);
+    if (ttbin->cycling_cadence_records.records) free(ttbin->cycling_cadence_records.records);
     free(ttbin);
 }
 
@@ -1101,6 +1156,12 @@ static void update_summary_information(TTBIN_FILE *ttbin)
         ttbin->total_calories = record->treadmill.calories;
         ttbin->duration       = record->treadmill.timestamp - ttbin->timestamp_utc;
         break;
+    case ACTIVITY_GYM:
+        record = ttbin->gym_records.records[ttbin->gym_records.count - 1];
+        ttbin->total_distance = 0.0f;
+        ttbin->total_calories = record->gym.total_calories;
+        ttbin->duration       = record->gym.timestamp - ttbin->timestamp_utc;
+        break;
     }
 }
 
@@ -1118,7 +1179,7 @@ int truncate_laps(TTBIN_FILE *ttbin)
     while (end->next)
     {
         end = end->next;
-        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag = TAG_TREADMILL))
+        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag == TAG_TREADMILL) || (end->tag == TAG_GYM))
             break;
     }
 
@@ -1150,7 +1211,7 @@ int truncate_race(TTBIN_FILE *ttbin)
     while (end->next)
     {
         end = end->next;
-        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag = TAG_TREADMILL))
+        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag == TAG_TREADMILL) || (end->tag == TAG_GYM))
             break;
     }
 
@@ -1174,7 +1235,7 @@ int truncate_goal(TTBIN_FILE *ttbin)
 {
     TTBIN_RECORD *record, *end;
     int i;
-    /* if we have no race, we can't truncate the file */
+    /* if we have no goal, we can't truncate the file */
     if (!ttbin->goal_progress_records.count)
         return 0;
 
@@ -1193,7 +1254,7 @@ int truncate_goal(TTBIN_FILE *ttbin)
     while (end->next)
     {
         end = end->next;
-        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag = TAG_TREADMILL))
+        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag == TAG_TREADMILL) || (end->tag == TAG_GYM))
             break;
     }
 
@@ -1225,7 +1286,7 @@ int truncate_intervals(TTBIN_FILE *ttbin)
     while (end->next)
     {
         end = end->next;
-        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag = TAG_TREADMILL))
+        if ((end->tag == TAG_GPS) || (end->tag == TAG_SWIM) || (end->tag = TAG_TREADMILL) || (end->tag == TAG_GYM))
             break;
     }
 
