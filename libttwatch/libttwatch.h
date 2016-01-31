@@ -16,6 +16,16 @@ extern "C" {
 
 #define LIBTTWATCH_VERSION  (0x000105)  /* version 0.1.5 */
 
+#define TOMTOM_VENDOR_ID                (0x1390)
+#define TOMTOM_MULTISPORT_PRODUCT_ID    (0x7474)
+#define TOMTOM_SPARK_MUSIC_PRODUCT_ID   (0x7475)
+#define TOMTOM_SPARK_CARDIO_PRODUCT_ID  (0x7477)
+
+#define IS_SPARK(id)                            \
+    (((id) == TOMTOM_SPARK_MUSIC_PRODUCT_ID) || \
+     ((id) == TOMTOM_SPARK_CARDIO_PRODUCT_ID))  \
+
+
 /*****************************************************************************/
 typedef struct
 {
@@ -26,6 +36,8 @@ typedef struct
     uint32_t    firmware_version;
     uint32_t    ble_version;
     const char  serial_number[64];
+
+    uint16_t    usb_product_id;
 
     uint32_t    current_file;
 
@@ -116,13 +128,29 @@ typedef struct __attribute__((packed))
     uint32_t hour;
     uint32_t minute;
     uint32_t second;
-    uint32_t _unk3[2];
-    uint32_t duration;
-    float    distance;
-    uint32_t calories;
-    uint32_t file_id;           /* does not contain valid data for swim entries */
-    uint32_t swolf;             /* only exists for swim entries */
-    uint32_t strokes_per_lap;   /* only exists for swim entries */
+    union
+    {
+        struct  __attribute__((packed))
+        {
+            uint32_t _unk3[2];
+            uint32_t duration;
+            float    distance;
+            uint32_t calories;
+            uint32_t file_id;           /* does not contain valid data for swim entries */
+            uint32_t swolf;             /* only exists for swim entries */
+            uint32_t strokes_per_lap;   /* only exists for swim entries */
+        } multisport;
+        struct __attribute__((packed))
+        {
+            uint8_t _unk3[11];
+            uint32_t duration;
+            float    distance;
+            uint32_t calories;
+            uint32_t file_id;           /* does not contain valid data for swim entries */
+            uint32_t swolf;             /* only exists for swim entries */
+            uint32_t strokes_per_lap;   /* only exists for swim entries */
+        } spark;
+    };
 } TTWATCH_HISTORY_ENTRY;
 
 /*****************************************************************************/

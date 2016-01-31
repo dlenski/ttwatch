@@ -29,9 +29,6 @@
 
 /*************************************************************************************************/
 
-#define TOMTOM_VENDOR_ID    (0x1390)
-#define TOMTOM_PRODUCT_ID   (0x7474)
-
 #define TT_MANIFEST_ENTRY_UTC_OFFSET    (169)
 
 #define MANIFEST_TYPE_ENUM  (0)
@@ -83,6 +80,7 @@ struct MANIFEST_ENUM_DEFINITION
 
 #include "manifest_definitions.h"
 #include "manifest_definitions_0001082e.h"
+#include "manifest_definitions_00010113.h"
 
 struct
 {
@@ -96,6 +94,7 @@ struct
     { 0x00010823, MANIFEST_DEFINITION_00010819_COUNT, MANIFEST_DEFINITIONS_00010819 },
     { 0x0001082a, MANIFEST_DEFINITION_00010819_COUNT, MANIFEST_DEFINITIONS_00010819 },
     { 0x0001082e, MANIFEST_DEFINITION_0001082e_COUNT, MANIFEST_DEFINITIONS_0001082e },
+    { 0x00010113, MANIFEST_DEFINITION_00010113_COUNT, MANIFEST_DEFINITIONS_00010113 },
 };
 
 #define MANIFEST_DEFINITION_COUNT (sizeof(MANIFEST_DEFINITIONS) / sizeof(MANIFEST_DEFINITIONS[0]))
@@ -591,64 +590,67 @@ void do_update_firmware(TTWATCH *watch, int force)
         goto cleanup;
     }
 
-    /* find the latest BLE version */
-    ptr = strstr((char*)download.data, "<BLE version=\"");
-    if (!ptr)
+    /* find the latest BLE version for the Multisport version*/
+    if (!IS_SPARK(watch->usb_product_id))
     {
-        write_log(1, "Unable to determine latest BLE version\n");
-        goto cleanup;
-    }
-    latest_ble_version = strtoul(ptr + 14, NULL, 0);
-
-    /* check to see if we need to do anything */
-    if (!force && (latest_ble_version <= current_ble_version))
-        write_log(1, "Current BLE firmware is already at latest version\n");
-    else
-    {
-        write_log(0, "Current BLE Firmware Version: %u\n", current_ble_version);
-        write_log(0, "Latest BLE Firmware Version : %u\n", latest_ble_version);
-
-        /* find the download URL of the BLE firmware */
-        ptr = strstr(ptr, "URL=\"");
+        ptr = strstr((char*)download.data, "<BLE version=\"");
         if (!ptr)
         {
-            write_log(1, "Unable to determine BLE firmware download URL\n");
+            write_log(1, "Unable to determine latest BLE version\n");
             goto cleanup;
         }
-        fw_url = ptr + 5;
-        ptr = strstr(fw_url, "\"");
-        if (!ptr)
-        {
-            write_log(1, "Unable to determine BLE firmware download URL\n");
-            goto cleanup;
-        }
-        *ptr = 0;
+        latest_ble_version = strtoul(ptr + 14, NULL, 0);
 
-        /* find the BLE firmware file ID */
-        ptr = strrchr(fw_url, '/');
-        if (!ptr)
-        {
-            write_log(1, "Unable to determine BLE file ID\n");
-            goto cleanup;
-        }
-
-        firmware_files = (FIRMWARE_FILE*)realloc(firmware_files, ++file_count * sizeof(FIRMWARE_FILE));
-
-        firmware_files[file_count - 1].id = strtoul(ptr + 1, NULL, 0);
-        firmware_files[file_count - 1].download.data   = 0;
-        firmware_files[file_count - 1].download.length = 0;
-
-        /* create the full URL and download the file */
-        sprintf(url, "http://download.tomtom.com/sweet/fitness/Firmware/%08X/%s", product_id, fw_url);
-        /*free(fw_url);*/
-        write_log(0, "Download %s ... ", url);
-        if (download_file(url, &firmware_files[file_count - 1].download))
-        {
-            write_log(0, "Failed\n");
-            goto cleanup;
-        }
+        /* check to see if we need to do anything */
+        if (!force && (latest_ble_version <= current_ble_version))
+            write_log(1, "Current BLE firmware is already at latest version\n");
         else
-            write_log(0, "Done\n");
+        {
+            write_log(0, "Current BLE Firmware Version: %u\n", current_ble_version);
+            write_log(0, "Latest BLE Firmware Version : %u\n", latest_ble_version);
+
+            /* find the download URL of the BLE firmware */
+            ptr = strstr(ptr, "URL=\"");
+            if (!ptr)
+            {
+                write_log(1, "Unable to determine BLE firmware download URL\n");
+                goto cleanup;
+            }
+            fw_url = ptr + 5;
+            ptr = strstr(fw_url, "\"");
+            if (!ptr)
+            {
+                write_log(1, "Unable to determine BLE firmware download URL\n");
+                goto cleanup;
+            }
+            *ptr = 0;
+
+            /* find the BLE firmware file ID */
+            ptr = strrchr(fw_url, '/');
+            if (!ptr)
+            {
+                write_log(1, "Unable to determine BLE file ID\n");
+                goto cleanup;
+            }
+
+            firmware_files = (FIRMWARE_FILE*)realloc(firmware_files, ++file_count * sizeof(FIRMWARE_FILE));
+
+            firmware_files[file_count - 1].id = strtoul(ptr + 1, NULL, 0);
+            firmware_files[file_count - 1].download.data   = 0;
+            firmware_files[file_count - 1].download.length = 0;
+
+            /* create the full URL and download the file */
+            sprintf(url, "http://download.tomtom.com/sweet/fitness/Firmware/%08X/%s", product_id, fw_url);
+            /*free(fw_url);*/
+            write_log(0, "Download %s ... ", url);
+            if (download_file(url, &firmware_files[file_count - 1].download))
+            {
+                write_log(0, "Failed\n");
+                goto cleanup;
+            }
+            else
+                write_log(0, "Done\n");
+        }
     }
 
     /* check to see if we need to update the firmware */
@@ -1056,9 +1058,18 @@ static void do_create_continuous_race_file_callback(uint32_t id, uint32_t length
     entry->hour     = timestamp.tm_hour;
     entry->minute   = timestamp.tm_min;
     entry->second   = timestamp.tm_sec;
-    entry->duration = data->duration;
-    entry->distance = data->distance;
-    entry->file_id  = index;
+    if (!IS_SPARK(data->watch->usb_product_id))
+    {
+        entry->multisport.duration = data->duration;
+        entry->multisport.distance = data->distance;
+        entry->multisport.file_id  = index;
+    }
+    else
+    {
+        entry->spark.duration = data->duration;
+        entry->spark.distance = data->distance;
+        entry->spark.file_id  = index;
+    }
 
     if (ttwatch_write_whole_file(data->watch, id, file, length) != TTWATCH_NoError)
     {
@@ -1212,10 +1223,15 @@ error:
 }
 
 /*****************************************************************************/
+typedef struct
+{
+    TTWATCH_ACTIVITY activity;
+    TTWATCH *watch;
+} ListHistoryCallbackData;
 static void do_list_history_callback(TTWATCH_ACTIVITY activity, int index, const TTWATCH_HISTORY_ENTRY *entry, void *data)
 {
-    TTWATCH_ACTIVITY act = *(TTWATCH_ACTIVITY*)data;
-    if (act != activity)
+    ListHistoryCallbackData *d = (ListHistoryCallbackData*)data;
+    if (d->activity != activity)
     {
         switch (activity)
         {
@@ -1226,19 +1242,30 @@ static void do_list_history_callback(TTWATCH_ACTIVITY activity, int index, const
         case TTWATCH_Freestyle: write_log(0, "Freestyle:\n"); break;
         case TTWATCH_Gym:       write_log(0, "Gym:\n"); break;
         }
-        *(int*)data = activity;
+        d->activity = activity;
     }
-    write_log(0, "%d: %04d/%02d/%02d %02d:%02d:%02d, %4ds, %8.2fm, %4d calories", index + 1,
-        entry->year, entry->month, entry->day, entry->hour, entry->minute, entry->second,
-        entry->duration, entry->distance, entry->calories);
-    if (entry->activity == TTWATCH_Swimming)
-        write_log(0, ", %d swolf, %d spl", entry->swolf, entry->strokes_per_lap);
+    write_log(0, "%d: %04d/%02d/%02d %02d:%02d:%02d", index + 1,
+        entry->year, entry->month, entry->day, entry->hour, entry->minute, entry->second);
+    if (!IS_SPARK(d->watch->usb_product_id))
+    {
+        write_log(0, ", %4ds, %8.2fm, %4d calories",
+            entry->multisport.duration, entry->multisport.distance, entry->multisport.calories);
+        if (entry->activity == TTWATCH_Swimming)
+            write_log(0, ", %d swolf, %d spl", entry->multisport.swolf, entry->multisport.strokes_per_lap);
+    }
+    else
+    {
+        write_log(0, ", %4ds, %8.2fm, %4d calories",
+            entry->spark.duration, entry->spark.distance, entry->spark.calories);
+        if (entry->activity == TTWATCH_Swimming)
+            write_log(0, ", %d swolf, %d spl", entry->spark.swolf, entry->spark.strokes_per_lap);
+    }
     write_log(0, "\n");
 }
 void do_list_history(TTWATCH *watch)
 {
-    unsigned act = -1;
-    if (ttwatch_enumerate_history_entries(watch, do_list_history_callback, &act) != TTWATCH_NoError)
+    ListHistoryCallbackData cbdata = { -1, watch };
+    if (ttwatch_enumerate_history_entries(watch, do_list_history_callback, &cbdata) != TTWATCH_NoError)
         write_log(1, "Unable to enumerate history entries\n");
 }
 
@@ -1341,7 +1368,7 @@ void do_display_settings(TTWATCH *watch)
             break;
         case MANIFEST_TYPE_FLOAT:
             float_defn = (struct MANIFEST_FLOAT_DEFINITION*)definitions[i];
-            write_log(0, "%.2f %s", *(float*)&value / float_defn->scaling_factor, float_defn->units);
+            write_log(0, "%.2f %s", (float)value / float_defn->scaling_factor, float_defn->units);
             break;
         }
         write_log(0, "\n");
@@ -1516,7 +1543,7 @@ void do_get_setting(TTWATCH *watch, const char *setting)
             break;
         case MANIFEST_TYPE_FLOAT:
             float_defn = (struct MANIFEST_FLOAT_DEFINITION*)definitions[i];
-            write_log(0, "%.2f %s", *(float*)&value / float_defn->scaling_factor, float_defn->units);
+            write_log(0, "%.2f %s", (float)value / float_defn->scaling_factor, float_defn->units);
             break;
         }
         write_log(0, "\n");
@@ -2302,7 +2329,23 @@ int main(int argc, char *argv[])
         {
             int result;
             if ((result = libusb_hotplug_register_callback(NULL, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED,
-                LIBUSB_HOTPLUG_ENUMERATE, TOMTOM_VENDOR_ID, TOMTOM_PRODUCT_ID,
+                LIBUSB_HOTPLUG_ENUMERATE, TOMTOM_VENDOR_ID, TOMTOM_MULTISPORT_PRODUCT_ID,
+                LIBUSB_HOTPLUG_MATCH_ANY, hotplug_attach_callback, options, NULL)) != 0)
+            {
+                write_log(1, "Unable to register hotplug callback: %d\n", result);
+                _exit(1);
+            }
+
+            if ((result = libusb_hotplug_register_callback(NULL, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED,
+                LIBUSB_HOTPLUG_ENUMERATE, TOMTOM_VENDOR_ID, TOMTOM_SPARK_CARDIO_PRODUCT_ID,
+                LIBUSB_HOTPLUG_MATCH_ANY, hotplug_attach_callback, options, NULL)) != 0)
+            {
+                write_log(1, "Unable to register hotplug callback: %d\n", result);
+                _exit(1);
+            }
+
+            if ((result = libusb_hotplug_register_callback(NULL, LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED,
+                LIBUSB_HOTPLUG_ENUMERATE, TOMTOM_VENDOR_ID, TOMTOM_SPARK_MUSIC_PRODUCT_ID,
                 LIBUSB_HOTPLUG_MATCH_ANY, hotplug_attach_callback, options, NULL)) != 0)
             {
                 write_log(1, "Unable to register hotplug callback: %d\n", result);
