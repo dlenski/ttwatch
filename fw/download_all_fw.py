@@ -12,7 +12,7 @@ product_ids = (
 )
 
 # http://us.support.tomtom.com/app/answers/detail/a_id/17441/~/what%E2%80%99s-new-in-the-latest-software-for-my-runner-or-multi-sport-watch%3F
-fw_vers = ['1_2_0', '1_3_1', '1_4_1', '1_5_1', '1_5_4', '1_6_13', '1_7_16', '1_7_22', '1_7_25', '1_8_5', '1_8_19', '1_8_25', '1_8_32', '1_8_34', '1_8_35', '1_8_42']
+fw_vers = ['1_2_0', '1_3_1', '1_4_1', '1_5_1', '1_5_4', '1_6_13', '1_7_16', '1_7_22', '1_7_25', '1_8_5', '1_8_19', '1_8_25', '1_8_32', '1_8_34', '1_8_35', '1_8_42', '1_8_46']
 ble_fw_vers = map(str, range(0, 24+1))
 
 files = (
@@ -77,15 +77,16 @@ s = requests.Session()
 for pid, product in product_ids:
     print "%s (%s):" % (product, pid)
     for bfwv in ble_fw_vers:
-        p = os.path.join('all_fw', pid, 'BLE', bfwv, '0x00000012')
-        url = base_url + '/%s/BLE/%s/0x00000012'%(pid,bfwv)
-        while True:
-            try:
-                download_file(s, url, p, cache)
-                break
-            except requests.exceptions.ConnectionError:
-                print "Waiting 5s..."
-                time.sleep(5)
+        for bfwnum in range(32):
+            p = os.path.join('all_fw', pid, 'BLE', bfwv, '0x%08X'%bfwnum)
+            url = base_url + '/%s/BLE/%s/0x%08X'%(pid,bfwv,bfwnum)
+            while True:
+                try:
+                    download_file(s, url, p, cache)
+                    break
+                except requests.exceptions.ConnectionError:
+                    print "Waiting 5s..."
+                    time.sleep(5)
 
     for fwv in fw_vers:
         for f in files:
