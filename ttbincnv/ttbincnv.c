@@ -3,6 +3,8 @@
 ** TTBIN file converter                                                      **
 \*****************************************************************************/
 
+#define _GNU_SOURCE
+
 #include "ttbin.h"
 
 #include <stdio.h>
@@ -21,7 +23,7 @@ char *change_extension(const char *path, const char *ext)
     char *endfn=strrchr(fn, '.');
     char *newpath;
 
-    asprintf(&newpath, "%s/%.*s.%s", dir, endfn ? endfn-fn : strlen(fn), fn, ext);
+    asprintf(&newpath, "%s/%.*s.%s", dir, endfn ? (int)(endfn-fn) : (int)strlen(fn), fn, ext);
     free(d);
     free(f);
     return newpath;
